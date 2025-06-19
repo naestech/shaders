@@ -1,7 +1,7 @@
 ```
 ebb  
  ├── index.html
- ├── image.jpg
+ ├── ebb.jpg
  └── output.gif
 ```
  
