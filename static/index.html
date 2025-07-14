@@ -190,14 +190,32 @@
         gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
         gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
 
-        const framebuffer = gl.createFramebuffer();
-        const previousFrameTexture = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        let textures = [];
+        let framebuffers = [];
+        function createPingPongTexturesAndFramebuffers(width, height) {
+            for (let i = 0; i < 2; ++i) {
+                if (textures[i]) gl.deleteTexture(textures[i]);
+                if (framebuffers[i]) gl.deleteFramebuffer(framebuffers[i]);
+            }
+            textures = [];
+            framebuffers = [];
+            for (let i = 0; i < 2; ++i) {
+                const tex = gl.createTexture();
+                gl.bindTexture(gl.TEXTURE_2D, tex);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                textures.push(tex);
+
+                const fb = gl.createFramebuffer();
+                gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+                gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+                framebuffers.push(fb);
+            }
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+        }
 
         function resize() {
             const displayWidth = canvas.clientWidth;
@@ -207,40 +225,49 @@
                 canvas.width = displayWidth;
                 canvas.height = displayHeight;
                 gl.viewport(0, 0, displayWidth, displayHeight);
-                gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
-                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, displayWidth, displayHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+                createPingPongTexturesAndFramebuffers(displayWidth, displayHeight);
             }
         }
+
+        createPingPongTexturesAndFramebuffers(canvas.width, canvas.height);
+
+        let ping = 0, pong = 1;
 
         function render(time) {
             time *= 0.001;
             
             resize();
 
-            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
-            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, previousFrameTexture, 0);
-
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffers[ping]);
+            gl.viewport(0, 0, canvas.width, canvas.height);
             gl.clearColor(0, 0, 0, 1);
             gl.clear(gl.COLOR_BUFFER_BIT);
-            
+
             gl.useProgram(program);
- 
             gl.uniform1f(timeLocation, time);
             gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
             gl.uniform1i(previousFrameLocation, 0);
- 
+
             gl.activeTexture(gl.TEXTURE0);
-            gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
+            gl.bindTexture(gl.TEXTURE_2D, textures[pong]);
 
             gl.enableVertexAttribArray(positionLocation);
             gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
             gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
-  
+
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
             gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.viewport(0, 0, canvas.width, canvas.height);
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.uniform1i(previousFrameLocation, 0);
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, textures[ping]);
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-            
+
+            [ping, pong] = [pong, ping];
+
             requestAnimationFrame(render);
         }
 
