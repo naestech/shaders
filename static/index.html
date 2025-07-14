@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title> 02 :: static </title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background: #000;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="glCanvas"></canvas>
+    <script>
+        // initialize, check if webgl2 is supported
+        const canvas = document.getElementById('glCanvas');
+        const gl = canvas.getContext('webgl2');
+
+        if (!gl) {
+            alert('WebGL2 not supported');
+            throw new Error('WebGL2 not supported');
+        }
+
+        // define vertex, fragment shaders
+        const vertexShaderSource = `#version 300 es
+        in vec4 a_position;
+        void main() {
+            gl_Position = a_position;
+        }`;
+
+        // create pastel rainbow, tv static effect
+        const fragmentShaderSource = `#version 300 es
+        precision highp float;
+        
+        uniform float u_time;                    // time (in seconds)
+        uniform vec2 u_resolution;               // canvas (width and height)
+        uniform sampler2D u_previousFrame;       // previous frame's texture (for tv static effect)
+        
+        out vec4 fragColor;
+        
+        vec3 pastelRainbow(float t) {
+            // define rainbow (in rgb)
+            vec3 colors[6] = vec3[6](
+                vec3(1.0, 0.7, 0.8),   // red
+                vec3(1.0, 0.8, 0.6),   // orange  
+                vec3(1.0, 0.9, 0.7),   // yellow
+                vec3(0.7, 0.9, 0.7),   // green
+                vec3(0.7, 0.8, 1.0),   // blue
+                vec3(0.9, 0.7, 0.9)    // purple
+            );
+            
+            // cycle through colors (6 second cycle)
+            float cycle = mod(t, 6.0);
+            int index = int(floor(cycle));
+            float blend = fract(cycle);  // smooth transition
+            
+            // current, next color
+            vec3 color1 = colors[index];
+            vec3 color2 = colors[(index + 1) % 6];
+            
+            return mix(color1, color2, smoothstep(0.0, 1.0, blend));
+        }
+        
+        float noise(vec2 p) {
+            // hash function: creates "random" glitch patterns
+            return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+        }
+        
+        vec2 datamoshDisplacement(vec2 uv, float time) {
+            float noise1 = noise(uv * 10.0 + time * 0.1);
+            float noise2 = noise(uv * 20.0 + time * 0.05);
+            
+            // pixel motion: wave-based displacement
+            vec2 displacement = vec2(
+                sin(uv.y * 50.0 + time * 0.5) * 0.01 * noise1,  // horizontal
+                cos(uv.x * 30.0 + time * 0.3) * 0.01 * noise2   // vertical
+            );
+            
+            if (noise(uv * 100.0 + time * 0.1) > 0.995) {
+                displacement += vec2(
+                    (noise(uv + time * 0.01) - 0.5) * 0.1,
+                    (noise(uv + time * 0.02) - 0.5) * 0.1
+                );
+            }
+            
+            return displacement;
+        }
+        
+        vec3 rgbShift(vec2 uv, float time) {
+            float shift = 0.005 + 0.01 * sin(time * 0.5);
+            
+            // pixel displacement
+            vec2 displacement = datamoshDisplacement(uv, time);
+            
+            float r = texture(u_previousFrame, uv + displacement + vec2(shift, 0.0)).r;
+            float g = texture(u_previousFrame, uv + displacement).g;
+            float b = texture(u_previousFrame, uv + displacement - vec2(shift, 0.0)).b;
+            
+            return vec3(r, g, b);
+        }
+        
+        void main() {
+            // convert pixel coordinates to uv space (0.0 to 1.0)
+            vec2 uv = gl_FragCoord.xy / u_resolution.xy;
+
+            float rainbowTime = u_time * 0.3;
+            vec3 rainbowColor = pastelRainbow(rainbowTime);
+            
+            vec2 motion = vec2(
+                sin(uv.x * 10.0 + rainbowTime) * 0.1,
+                cos(uv.y * 8.0 + rainbowTime * 0.7) * 0.1
+            );
+            
+            vec2 glitchUV = uv + motion * 0.01;
+            vec3 glitchColor = rgbShift(glitchUV, u_time);
+            
+            vec3 currentColor = rainbowColor;
+            vec3 previousColor = texture(u_previousFrame, uv).rgb;
+            
+            float trail = 0.3 + 0.2 * sin(u_time * 0.5);
+            vec3 finalColor = mix(currentColor, previousColor, trail);
+            
+            if (noise(uv * 200.0 + u_time * 0.1) > 0.998) {
+                finalColor = glitchColor;
+            }
+            
+            float scanline = sin(uv.y * 200.0 + u_time * 2.0) * 0.1 + 0.9;
+            finalColor *= scanline;
+            
+            if (noise(uv * 300.0 + u_time * 0.05) > 0.999) {
+                finalColor = vec3(noise(uv + u_time * 0.01));
+            }
+            
+            fragColor = vec4(finalColor, 1.0);
+        }`;
+
+        function createShader(gl, type, source) {
+            const shader = gl.createShader(type);
+            gl.shaderSource(shader, source);
+            gl.compileShader(shader);
+            
+            if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+                console.error('Shader compilation error:', gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+                return null;
+            }
+            return shader;
+        }
+
+        function createProgram(gl, vertexShader, fragmentShader) {
+            const program = gl.createProgram();
+            gl.attachShader(program, vertexShader);
+            gl.attachShader(program, fragmentShader);
+            gl.linkProgram(program);
+            
+            if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+                console.error('Program linking error:', gl.getProgramInfoLog(program));
+                gl.deleteProgram(program);
+                return null;
+            }
+            return program;
+        }
+
+        const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+        const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+        const program = createProgram(gl, vertexShader, fragmentShader);
+
+        const positionLocation = gl.getAttribLocation(program, 'a_position');
+        const timeLocation = gl.getUniformLocation(program, 'u_time');
+        const resolutionLocation = gl.getUniformLocation(program, 'u_resolution');
+        const previousFrameLocation = gl.getUniformLocation(program, 'u_previousFrame');
+
+        const positions = new Float32Array([
+            -1, -1,
+             1, -1,
+            -1,  1,
+             1,  1,
+        ]);
+
+        const positionBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, positions, gl.STATIC_DRAW);
+
+        const framebuffer = gl.createFramebuffer();
+        const previousFrameTexture = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        function resize() {
+            const displayWidth = canvas.clientWidth;
+            const displayHeight = canvas.clientHeight;
+            
+            if (canvas.width !== displayWidth || canvas.height !== displayHeight) {
+                canvas.width = displayWidth;
+                canvas.height = displayHeight;
+                gl.viewport(0, 0, displayWidth, displayHeight);
+                gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, displayWidth, displayHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+            }
+        }
+
+        function render(time) {
+            time *= 0.001;
+            
+            resize();
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+            gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, previousFrameTexture, 0);
+
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            
+            gl.useProgram(program);
+ 
+            gl.uniform1f(timeLocation, time);
+            gl.uniform2f(resolutionLocation, canvas.width, canvas.height);
+            gl.uniform1i(previousFrameLocation, 0);
+ 
+            gl.activeTexture(gl.TEXTURE0);
+            gl.bindTexture(gl.TEXTURE_2D, previousFrameTexture);
+
+            gl.enableVertexAttribArray(positionLocation);
+            gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+            gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+  
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+            gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            
+            requestAnimationFrame(render);
+        }
+
+        requestAnimationFrame(render);
+    </script>
+</body>
+</html> 
